@@ -1,10 +1,6 @@
-import { useEffect, useState } from "react";
-import { auth, db, storage } from "../firebase";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-} from "firebase/auth";
+import { useCallback, useEffect, useState } from "react";
+import { db, storage } from "../firebase";
+import { useAuth } from "../auth/auth-context";
 import {
   addDoc,
   collection,
@@ -22,13 +18,26 @@ import {
   uploadBytes,
 } from "firebase/storage";
 
-const ALLOWED_ADMIN_EMAIL = "medeabeautylounge@medea.com";
+async function getGalleryItems() {
+  const galleryQuery = query(
+    collection(db, "gallery"),
+    orderBy("createdAt", "desc"),
+  );
+  const snapshot = await getDocs(galleryQuery);
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+}
+
+async function getBeforeAfterItems() {
+  const beforeAfterQuery = query(
+    collection(db, "beforeAfter"),
+    orderBy("createdAt", "desc"),
+  );
+  const snapshot = await getDocs(beforeAfterQuery);
+  return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+}
 
 export default function AdminMedea() {
-  const [user, setUser] = useState(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
-  const [email, setEmail] = useState(ALLOWED_ADMIN_EMAIL);
-  const [password, setPassword] = useState("");
+  const { user, logout } = useAuth();
 
   const [gallery, setGallery] = useState([]);
   const [beforeAfter, setBeforeAfter] = useState([]);
@@ -39,54 +48,39 @@ export default function AdminMedea() {
   const [beforeFile, setBeforeFile] = useState(null);
   const [afterFile, setAfterFile] = useState(null);
 
-  const isAllowedAdmin = user?.email === ALLOWED_ADMIN_EMAIL;
-
-  const loadGallery = async () => {
-    const q = query(collection(db, "gallery"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    setGallery(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  };
-
-  const loadBeforeAfter = async () => {
-    const q = query(collection(db, "beforeAfter"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    setBeforeAfter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  };
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      setCheckingAuth(false);
-
-      if (currentUser?.email === ALLOWED_ADMIN_EMAIL) {
-        await loadGallery();
-        await loadBeforeAfter();
-      }
-    });
-
-    return () => unsubscribe();
+  const loadGallery = useCallback(async () => {
+    setGallery(await getGalleryItems());
   }, []);
 
-  const login = async (e) => {
-    e.preventDefault();
+  const loadBeforeAfter = useCallback(async () => {
+    setBeforeAfter(await getBeforeAfterItems());
+  }, []);
 
-    try {
-      const credential = await signInWithEmailAndPassword(auth, email, password);
+  useEffect(() => {
+    let active = true;
 
-      if (credential.user.email !== ALLOWED_ADMIN_EMAIL) {
-        await signOut(auth);
-        alert("Questo account non è autorizzato.");
+    async function loadAdminContent() {
+      try {
+        const [galleryItems, beforeAfterItems] = await Promise.all([
+          getGalleryItems(),
+          getBeforeAfterItems(),
+        ]);
+
+        if (active) {
+          setGallery(galleryItems);
+          setBeforeAfter(beforeAfterItems);
+        }
+      } catch (error) {
+        console.error("Errore durante il caricamento dei contenuti admin.", error);
       }
-    } catch (error) {
-      console.error(error);
-      alert("Email o password non corretti.");
     }
-  };
 
-  const logout = async () => {
-    await signOut(auth);
-    setUser(null);
-  };
+    void loadAdminContent();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const uploadImage = async (file, folder) => {
     const safeName = file.name.replaceAll(" ", "-").toLowerCase();
@@ -100,11 +94,6 @@ export default function AdminMedea() {
   };
 
   const addGalleryImages = async (files) => {
-    if (!isAllowedAdmin) {
-      alert("Non sei autorizzato.");
-      return;
-    }
-
     if (!files || files.length === 0) return;
 
     setLoading(true);
@@ -133,11 +122,6 @@ export default function AdminMedea() {
 
   const addBeforeAfter = async (e) => {
     e.preventDefault();
-
-    if (!isAllowedAdmin) {
-      alert("Non sei autorizzato.");
-      return;
-    }
 
     if (!baTitle || !beforeFile || !afterFile) {
       alert("Inserisci titolo, foto prima e foto dopo");
@@ -177,11 +161,6 @@ export default function AdminMedea() {
   };
 
   const removeGallery = async (item) => {
-    if (!isAllowedAdmin) {
-      alert("Non sei autorizzato.");
-      return;
-    }
-
     if (!confirm("Eliminare questa foto dalla Gallery?")) return;
 
     try {
@@ -195,11 +174,6 @@ export default function AdminMedea() {
   };
 
   const removeBeforeAfter = async (item) => {
-    if (!isAllowedAdmin) {
-      alert("Non sei autorizzato.");
-      return;
-    }
-
     if (!confirm("Eliminare questo Prima/Dopo?")) return;
 
     try {
@@ -212,47 +186,6 @@ export default function AdminMedea() {
       alert("Errore durante l'eliminazione.");
     }
   };
-
-  if (checkingAuth) {
-    return (
-      <main style={styles.page}>
-        <div style={styles.loginBox}>
-          <h1 style={styles.title}>Admin Medea</h1>
-          <p style={styles.text}>Controllo accesso...</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (!user || !isAllowedAdmin) {
-    return (
-      <main style={styles.page}>
-        <form onSubmit={login} style={styles.loginBox}>
-          <h1 style={styles.title}>Admin Medea</h1>
-          <p style={styles.text}>Accesso riservato alla titolare.</p>
-
-          <input
-            type="email"
-            placeholder="Email admin"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={styles.input}
-          />
-
-          <input
-            type="password"
-            placeholder="Password admin"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
-          />
-
-          <button style={styles.button}>Entra</button>
-          <a href="/" style={styles.back}>Torna al sito</a>
-        </form>
-      </main>
-    );
-  }
 
   return (
     <main style={styles.page}>
@@ -354,7 +287,6 @@ export default function AdminMedea() {
 
 const styles = {
   page: { minHeight: "100vh", background: "#f7f4f1", padding: "48px 24px", color: "#1d1716" },
-  loginBox: { maxWidth: "440px", margin: "120px auto", background: "#fffaf5", padding: "42px", borderRadius: "32px", boxShadow: "0 20px 60px rgba(29,23,22,0.12)" },
   header: { maxWidth: "1200px", margin: "0 auto 32px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", flexWrap: "wrap" },
   card: { maxWidth: "1200px", margin: "0 auto 32px", background: "#fffaf5", padding: "34px", borderRadius: "32px", boxShadow: "0 20px 60px rgba(29,23,22,0.08)" },
   title: { fontFamily: "Georgia, serif", fontSize: "48px", margin: "0 0 14px" },
@@ -365,7 +297,6 @@ const styles = {
   label: { fontWeight: "900", color: "#736357" },
   button: { background: "#736357", color: "#fff", border: "none", borderRadius: "999px", padding: "16px 28px", fontWeight: "900", cursor: "pointer" },
   darkButton: { background: "#1d1716", color: "#fff", border: "none", borderRadius: "999px", padding: "14px 24px", fontWeight: "900", cursor: "pointer" },
-  back: { display: "inline-block", marginTop: "18px", color: "#736357", fontWeight: "900", textDecoration: "none" },
   formGrid: { display: "grid", gap: "6px" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "18px", marginTop: "24px" },
   previewCard: { background: "#f7f4f1", padding: "14px", borderRadius: "22px", border: "1px solid rgba(115,99,87,0.16)" },
