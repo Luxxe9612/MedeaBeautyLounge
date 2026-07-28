@@ -120,7 +120,7 @@ const messaggioTesto =
 const whatsappMessage = encodeURIComponent(messaggioTesto);
 
 // Link WhatsApp
-const whatsappUrl = `https://wa.me/393773975349?text=${whatsappMessage}`;
+const whatsappUrl = `https://wa.me/390916727291?text=${whatsappMessage}`;
     onSubmit({
       ...formData,
       tipo,
