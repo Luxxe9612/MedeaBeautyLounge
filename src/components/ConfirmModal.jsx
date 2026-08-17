@@ -2,7 +2,7 @@ import { CheckCircle, X, MessageCircle } from "lucide-react";
 
 function ConfirmModal({ data, onClose }) {
   const handleWhatsApp = () => {
-    window.open(data.whatsappUrl, "_blank");
+    if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank");
   };
 
   return (
@@ -85,7 +85,7 @@ function ConfirmModal({ data, onClose }) {
             lineHeight: "1.1",
           }}
         >
-          Prenotazione Confermata!
+          Richiesta ricevuta
         </h2>
 
         <p
@@ -96,7 +96,7 @@ function ConfirmModal({ data, onClose }) {
             marginBottom: "28px",
           }}
         >
-          Grazie <strong style={{ color: "#1d1716" }}>{data.nome}</strong>! La tua richiesta è stata registrata.
+          Grazie <strong style={{ color: "#1d1716" }}>{data.nome}</strong>! Medea Beauty Lounge verificherà la richiesta e ti contatterà per la conferma.
         </p>
 
         <div
@@ -140,12 +140,13 @@ function ConfirmModal({ data, onClose }) {
           }}
         >
           <p style={{ fontSize: "14px", color: "#1d1716", lineHeight: "1.6" }}>
-            <strong>Prossimo passo:</strong> Clicca qui sotto per inviare la conferma su WhatsApp. 
-            Ti risponderemo entro 24 ore per confermare l'appuntamento.
+            {data.whatsappUrl
+              ? <><strong>In alternativa:</strong> puoi aprire WhatsApp e inviare il riepilogo della richiesta.</>
+              : "WhatsApp non è ancora configurato. La richiesta è stata comunque ricevuta."}
           </p>
         </div>
 
-        <button
+        {data.whatsappUrl ? <button
           onClick={handleWhatsApp}
           style={{
             width: "100%",
@@ -174,8 +175,8 @@ function ConfirmModal({ data, onClose }) {
           }}
         >
           <MessageCircle size={20} />
-          Invia conferma su WhatsApp
-        </button>
+          Apri WhatsApp
+        </button> : null}
 
         <button
           onClick={onClose}

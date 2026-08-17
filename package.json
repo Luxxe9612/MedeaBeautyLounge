@@ -7,19 +7,22 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test src/auth/*.test.js",
+    "test": "npm run test:auth && npm run test:booking",
+    "test:auth": "node --test src/auth/*.test.js",
+    "test:booking": "vitest run src/components/BookingForm.test.jsx",
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^12.6.0",
     "framer-motion": "^12.40.0",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.15.1",
-    "firebase": "^12.6.0"
+    "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -28,8 +31,10 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.15",
     "tailwindcss": "^3.4.19",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.10"
   }
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { db } from "../firebase";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { loadContent } from "../content/content-service";
 
 export default function GalleryPage() {
   const [gallery, setGallery] = useState([]);
@@ -9,9 +8,7 @@ export default function GalleryPage() {
   useEffect(() => {
     const loadGallery = async () => {
       try {
-        const q = query(collection(db, "gallery"), orderBy("createdAt", "desc"));
-        const snap = await getDocs(q);
-        setGallery(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setGallery(await loadContent("gallery", { legacyFallback: true }));
       } catch (error) {
         console.error(error);
       } finally {

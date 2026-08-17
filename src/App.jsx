@@ -8,21 +8,27 @@ import {
   Sparkles,
   Calendar,
 } from "lucide-react";
-import { db } from "./firebase";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { loadContent } from "./content/content-service";
+import {
+  legalConfiguration,
+  privacySections,
+  webCookieSections,
+} from "./config/legal";
 import "./App.css";
+import { loadPublicBusiness, publicBusinessFallback } from "./config/public-business";
 
 
 const BUSINESS_INFO = {
-  name: "Medea Beauty Lounge",
-  address: "Via Giorgio D'Antiochia, 6 - Palermo",
   vat: "07118580823",
-  email: "INSERISCI_EMAIL_UFFICIALE",
   developer: "Lucas Giarraffa",
 };
 
 function LegalPage({ type, onNavigate }) {
   const isPrivacy = type === "privacy";
+  const sections = isPrivacy ? privacySections : webCookieSections;
+  const version = isPrivacy
+    ? legalConfiguration.privacyVersion
+    : legalConfiguration.cookieVersion;
 
   return (
     <main className="site legal-page">
@@ -32,90 +38,16 @@ function LegalPage({ type, onNavigate }) {
         </a>
         <p className="eyebrow">Medea Beauty Lounge</p>
         <h1>{isPrivacy ? "Privacy Policy" : "Cookie Policy"}</h1>
-        <p className="legal-updated">Ultimo aggiornamento: 12 giugno 2026</p>
+        <p className="legal-updated">In vigore dal {legalConfiguration.effectiveDate} · Versione {version}</p>
       </section>
 
       <section className="legal-content">
-        {isPrivacy ? (
-          <>
-            <h2>1. Titolare del trattamento</h2>
-            <p>
-              Il titolare del trattamento dei dati personali è {BUSINESS_INFO.name}, con sede in {BUSINESS_INFO.address}, P. IVA {BUSINESS_INFO.vat}. Per qualsiasi richiesta puoi scrivere a {BUSINESS_INFO.email}.
-            </p>
-
-            <h2>2. Dati personali trattati</h2>
-            <p>
-              Il sito può trattare dati inviati volontariamente dall'utente tramite richiesta di informazioni, prenotazione, contatto WhatsApp o interazione con i canali social collegati. I dati possono includere nome, cognome, recapito telefonico, email, preferenze relative ai trattamenti e contenuto del messaggio inviato.
-            </p>
-
-            <h2>3. Finalità del trattamento</h2>
-            <p>
-              I dati vengono utilizzati per rispondere alle richieste dell'utente, gestire prenotazioni e consulenze, fornire informazioni sui trattamenti, amministrare il sito e garantire il corretto funzionamento dei servizi digitali collegati.
-            </p>
-
-            <h2>4. Servizi tecnici utilizzati</h2>
-            <p>
-              Il sito può utilizzare Firebase Authentication, Firebase Firestore e Firebase Storage per l'area riservata, la gestione dei contenuti, la gallery e le immagini caricate dall'amministrazione. Possono essere presenti collegamenti a WhatsApp, Instagram e Google Maps, che applicano le rispettive informative privacy.
-            </p>
-
-            <h2>5. Base giuridica</h2>
-            <p>
-              Il trattamento si basa sull'esecuzione di misure precontrattuali richieste dall'utente, sul consenso espresso quando necessario e sul legittimo interesse del titolare a mantenere il sito sicuro e funzionante.
-            </p>
-
-            <h2>6. Conservazione dei dati</h2>
-            <p>
-              I dati sono conservati per il tempo necessario a gestire la richiesta ricevuta e, dove previsto, per gli obblighi amministrativi, fiscali o di tutela dei diritti del titolare.
-            </p>
-
-            <h2>7. Comunicazione a terzi</h2>
-            <p>
-              I dati non vengono venduti. Possono essere trattati da fornitori tecnici strettamente necessari al funzionamento del sito, come piattaforme di hosting, Firebase/Google, servizi di messaggistica e strumenti collegati alla gestione delle richieste.
-            </p>
-
-            <h2>8. Diritti dell'utente</h2>
-            <p>
-              L'utente può richiedere accesso, rettifica, cancellazione, limitazione, opposizione al trattamento e portabilità dei dati, nei limiti previsti dalla normativa applicabile, scrivendo ai contatti del titolare.
-            </p>
-
-            <h2>9. Realizzazione tecnica del sito</h2>
-            <p>
-              Il sito web è stato progettato e sviluppato da {BUSINESS_INFO.developer}. Il fornitore tecnico può intervenire solo per attività di manutenzione, aggiornamento o assistenza autorizzate dal titolare del trattamento.
-            </p>
-          </>
-        ) : (
-          <>
-            <h2>1. Cosa sono i cookie</h2>
-            <p>
-              I cookie sono piccoli file di testo che i siti possono salvare sul dispositivo dell'utente per consentire il funzionamento delle pagine, migliorare l'esperienza di navigazione o integrare servizi di terze parti.
-            </p>
-
-            <h2>2. Cookie tecnici</h2>
-            <p>
-              Il sito può utilizzare cookie tecnici e strumenti equivalenti necessari al corretto funzionamento delle pagine, alla sicurezza, alla gestione dell'area riservata e alla memorizzazione di preferenze essenziali.
-            </p>
-
-            <h2>3. Servizi di terze parti</h2>
-            <p>
-              Il sito può integrare servizi esterni come Firebase/Google, Google Maps, WhatsApp e Instagram. Questi servizi possono raccogliere informazioni tecniche secondo le rispettive policy, soprattutto quando l'utente interagisce con link, mappe o contenuti incorporati.
-            </p>
-
-            <h2>4. Cookie statistici e marketing</h2>
-            <p>
-              Al momento il sito non installa cookie di profilazione pubblicitaria propri. Se in futuro verranno aggiunti strumenti come Google Analytics, Meta Pixel o altri sistemi di tracciamento, la presente informativa verrà aggiornata e, dove richiesto, verrà richiesto il consenso dell'utente.
-            </p>
-
-            <h2>5. Gestione dei cookie</h2>
-            <p>
-              L'utente può gestire o disattivare i cookie dalle impostazioni del proprio browser. La disattivazione dei cookie tecnici potrebbe limitare alcune funzionalità del sito.
-            </p>
-
-            <h2>6. Contatti</h2>
-            <p>
-              Per informazioni sulla gestione dei cookie è possibile contattare {BUSINESS_INFO.name} all'indirizzo {BUSINESS_INFO.email}.
-            </p>
-          </>
-        )}
+        {sections.map((section) => (
+          <div key={section.title}>
+            <h2>{section.title}</h2>
+            {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+          </div>
+        ))}
 
         <div className="legal-actions">
           <a href="/" className="btn primary" onClick={(e) => { e.preventDefault(); onNavigate(null); }}>Torna al sito</a>
@@ -133,6 +65,8 @@ function LegalPage({ type, onNavigate }) {
 }
 
 function App() {
+  const [publicBusiness, setPublicBusiness] = useState(publicBusinessFallback);
+  useEffect(() => { void loadPublicBusiness().then(setPublicBusiness); }, []);
   const [hideFloatingBtn, setHideFloatingBtn] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [heroAnimate, setHeroAnimate] = useState(false);
@@ -190,9 +124,7 @@ function App() {
   useEffect(() => {
     const loadBeforeAfter = async () => {
       try {
-        const q = query(collection(db, "beforeAfter"), orderBy("createdAt", "desc"));
-        const snap = await getDocs(q);
-        setBeforeAfterItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setBeforeAfterItems(await loadContent("beforeAfter", { legacyFallback: true }));
       } catch (error) {
         console.error(error);
       }
@@ -1236,7 +1168,7 @@ function App() {
         >
           <div style={{ display: "grid", gap: "20px" }}>
  <a
-  href="https://www.google.com/maps/search/?api=1&query=Via+Giorgio+D%27Antiochia+6+Palermo"
+  href={publicBusiness.mapsUrl}
   target="_blank"
   rel="noopener noreferrer"
   style={{
@@ -1272,7 +1204,7 @@ function App() {
         marginBottom: "6px",
       }}
     >
-      Medea Beauty Lounge
+      {publicBusiness.businessName}
     </strong>
 
     <span
@@ -1282,7 +1214,7 @@ function App() {
         display: "block",
       }}
     >
-      Via Giorgio D'Antiochia, 6 • Palermo
+      {publicBusiness.address}
     </span>
 
     <span
@@ -1296,7 +1228,7 @@ function App() {
     </span>
   </div>
 </a>
-            <p style={{ fontSize: "18px" }}> Tel. Fisso: 091 6727291 </p>
+            <p style={{ fontSize: "18px" }}> Tel. Fisso: {publicBusiness.phoneDisplay} </p>
           </div>
 
           <div
@@ -1544,8 +1476,8 @@ function App() {
 
           <div>
             <h4 style={{ color: "#736357", marginBottom: "18px" }}>Contatti</h4>
-            <p style={{ color: "#e9d7c6" }}>📍 Via Giorgio D'Antiochia,6 - Palermo</p>
-            <p style={{ color: "#e9d7c6" }}> Tel. Fisso: 091 6727291</p>
+            <p style={{ color: "#e9d7c6" }}>📍 {publicBusiness.address}</p>
+            <p style={{ color: "#e9d7c6" }}> Tel. Fisso: {publicBusiness.phoneDisplay}</p>
           </div>
 
           <div>

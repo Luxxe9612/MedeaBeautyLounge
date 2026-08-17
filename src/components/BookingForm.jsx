@@ -1,731 +1,357 @@
-import { useState } from "react";
-import { Calendar, User, Mail, Phone, MessageSquare, Sparkles, ChevronDown, ArrowRight, Clock } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, Clock, Mail, MessageSquare, Phone, User } from "lucide-react";
 
-const TRATTAMENTI = [
-  "Epilazione laser",
-  "Trattamenti viso",
-  "Body shaping",
-  "Nails & manicure",
-  "Pedicure estetica",
-  "Laminazione ciglia",
-  "Epilsoft",
-  "Addome Sculpt",
-  "Skin Lab 360",
-];
+import {
+  BOOKING_ERROR_MESSAGES,
+  BOOKING_LIMITS,
+  buildWhatsAppUrl,
+  normalizeBookingEmail,
+  normalizeBookingPhone,
+  validateBookingContact,
+} from "../config/booking";
+import { legalConfiguration } from "../config/legal";
+import { loadPublicBusiness, publicBusinessFallback } from "../config/public-business";
+import {
+  loadBookingAvailability,
+  loadBookingOptions,
+  submitGuestBooking,
+} from "../services/booking-service";
+import {
+  formatItalianDate,
+  formatItalianDateTime,
+  toCalendarDateValue,
+} from "../utils/italian-date";
 
-const ORARI = [
-  "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00",
-];
+function createSubmissionId() {
+  return globalThis.crypto.randomUUID();
+}
+
+function futureDates(maximumBookingDays = 30) {
+  const result = [];
+  const today = new Date();
+  for (let offset = 1; offset <= maximumBookingDays; offset += 1) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + offset);
+    result.push({
+      value: toCalendarDateValue(date),
+      label: formatItalianDate(date),
+    });
+  }
+  return result;
+}
+
+function errorMessage(error) {
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+  if (code.includes("already-exists") || code.includes("failed-precondition")) {
+    return BOOKING_ERROR_MESSAGES.slotConflict;
+  }
+  if (code.includes("resource-exhausted")) return BOOKING_ERROR_MESSAGES.rateLimit;
+  if (code.includes("unavailable") || code.includes("network")) {
+    return BOOKING_ERROR_MESSAGES.unavailable;
+  }
+  return BOOKING_ERROR_MESSAGES.submit;
+}
 
 function BookingForm({ onSubmit }) {
-  const [step, setStep] = useState(1); // 1=Tipo, 2=Dati, 3=Data/Ora, 4=Riepilogo
-  const [tipo, setTipo] = useState(""); // "consulenza" o "trattamento"
-  const [formData, setFormData] = useState({
-    nome: "",
+  const [step, setStep] = useState(1);
+  const [options, setOptions] = useState(null);
+  const [business, setBusiness] = useState(publicBusinessFallback);
+  const [slots, setSlots] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsReload, setSlotsReload] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [optionsError, setOptionsError] = useState("");
+  const [slotsError, setSlotsError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [treatmentId, setTreatmentId] = useState("");
+  const [staffId, setStaffId] = useState("");
+  const [date, setDate] = useState("");
+  const [slot, setSlot] = useState(null);
+  const [submissionId] = useState(createSubmissionId);
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
     email: "",
-    telefono: "",
-    trattamento: "",
-    data: "",
-    ora: "",
-    messaggio: "",
+    phone: "",
+    message: "",
+    privacyAccepted: false,
+    honeypot: "",
   });
-  const [errors, setErrors] = useState({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const dates = useMemo(() => futureDates(options?.policy?.maximumBookingDays), [options?.policy?.maximumBookingDays]);
 
-  // Calcola date disponibili (prossimi 30 giorni)
-  const getAvailableDates = () => {
-    const dates = [];
-    const today = new Date();
-    for (let i = 1; i <= 30; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      // Salta domenica
-      if (date.getDay() !== 0) {
-        dates.push({
-          value: date.toISOString().split("T")[0],
-          label: date.toLocaleDateString("it-IT", {
-            weekday: "short",
-            day: "numeric",
-            month: "short",
-          }),
-        });
+  useEffect(() => { void loadPublicBusiness().then(setBusiness); }, []);
+
+  const reloadOptions = (force = false) => {
+    let active = true;
+    setLoading(true);
+    setOptionsError("");
+    loadBookingOptions(force)
+      .then((value) => {
+        if (active) setOptions(value);
+      })
+      .catch((loadError) => {
+        console.error("Caricamento opzioni prenotazione non riuscito.", loadError);
+        if (active) setOptionsError(BOOKING_ERROR_MESSAGES.options);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  };
+
+  useEffect(() => {
+    let active = true;
+    loadBookingOptions()
+      .then((value) => {
+        if (active) setOptions(value);
+      })
+      .catch((loadError) => {
+        console.error("Caricamento opzioni prenotazione non riuscito.", loadError);
+        if (active) setOptionsError(BOOKING_ERROR_MESSAGES.options);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!treatmentId || !date) return undefined;
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) {
+        setLoadingSlots(true);
+        setSlotsError("");
       }
-    }
-    return dates;
-  };
-
-  const availableDates = getAvailableDates();
-
-  const validateStep = (currentStep) => {
-    const newErrors = {};
-    if (currentStep === 1 && !tipo) {
-      newErrors.tipo = "Seleziona il tipo di appuntamento";
-    }
-    if (currentStep === 2) {
-      if (!formData.nome.trim()) newErrors.nome = "Inserisci il nome";
-      if (!formData.email.trim()) newErrors.email = "Inserisci l'email";
-      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = "Email non valida";
-      if (!formData.telefono.trim()) newErrors.telefono = "Inserisci il telefono";
-    }
-    if (currentStep === 3) {
-      if (!formData.trattamento) newErrors.trattamento = "Seleziona un trattamento";
-      if (!formData.data) newErrors.data = "Seleziona una data";
-      if (!formData.ora) newErrors.ora = "Seleziona un orario";
-    }
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: "" }));
-  };
-
-  const handleTipoSelect = (selectedTipo) => {
-    setTipo(selectedTipo);
-    setErrors((prev) => ({ ...prev, tipo: "" }));
-  };
-
-  const handleNext = () => {
-    if (validateStep(step)) {
-      setStep(step + 1);
-    }
-  };
-
-  const handleBack = () => {
-    setStep(step - 1);
-  };
-
-  const handleSubmit = () => {
-    if (!validateStep(step)) return;
-
-    setIsSubmitting(true);
-
-    // Prepara messaggio WhatsApp
-const tipoLabel = tipo === "consulenza" ? `Consulenza Beauty - ${formData.trattamento || "Generale"}` : `Trattamento: ${formData.trattamento}`;
-
-const messaggioTesto = 
-  `Richiesta di prenotazione!\n\n` +
-  `Dati della prenotazione:\n` +
-  `${tipoLabel}\n` +
-  `Nome: ${formData.nome}\n` +
-  `Telefono: ${formData.telefono}\n` +
-  `Data: ${formData.data}\n` +
-  `Ora: ${formData.ora}\n` +
-  (formData.messaggio ? `Note del cliente: ${formData.messaggio}\n` : "") +
-  `\nConfermatemi la prenotazione, grazie!`;
-
-// Codifica correttamente per l'URL
-const whatsappMessage = encodeURIComponent(messaggioTesto);
-
-// Link WhatsApp
-const whatsappUrl = `https://wa.me/390916727291?text=${whatsappMessage}`;
-    onSubmit({
-      ...formData,
-      tipo,
-      tipoLabel,
-      whatsappUrl,
     });
+    loadBookingAvailability({
+      treatmentId,
+      date,
+      ...(staffId ? { staffId } : {}),
+    })
+      .then((value) => {
+        if (active) setSlots(value);
+      })
+      .catch((loadError) => {
+        console.error("Caricamento disponibilità non riuscito.", loadError);
+        if (active) {
+          setSlots([]);
+          setSlotsError(BOOKING_ERROR_MESSAGES.slots);
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingSlots(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [date, slotsReload, staffId, treatmentId]);
 
-    setIsSubmitting(false);
+  const treatment = options?.treatments.find((item) => item.id === treatmentId);
+  const selectedStaff = options?.staff.find((item) => item.id === slot?.staffId);
+
+  const setField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setSubmitError("");
   };
+
+  const next = () => {
+    setSubmitError("");
+    if (step === 1 && !treatmentId) return setSubmitError("Seleziona un trattamento.");
+    if (step === 2 && (!date || !slot)) {
+      return setSubmitError("Seleziona una data e uno slot disponibile.");
+    }
+    if (step === 3) {
+      const invalid = validateBookingContact(form);
+      if (invalid.includes("privacyAccepted")) {
+        return setSubmitError("Accetta la Privacy Policy per inviare la richiesta.");
+      }
+      if (invalid.length) return setSubmitError("Controlla i dati inseriti prima di continuare.");
+    }
+    setStep((current) => Math.min(4, current + 1));
+    return undefined;
+  };
+
+  const submit = async () => {
+    if (!slot || !treatment || submitting) return;
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      const result = await submitGuestBooking({
+        submissionId,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        email: normalizeBookingEmail(form.email),
+        phone: normalizeBookingPhone(form.phone),
+        message: form.message.trim(),
+        treatmentId,
+        staffId: slot.staffId,
+        startsAt: slot.startsAt,
+        privacyAccepted: true,
+        source: "website",
+        honeypot: form.honeypot,
+      });
+      const lines = [
+        "Richiesta di prenotazione",
+        treatment.name,
+        `Nome: ${form.firstName.trim()} ${form.lastName.trim()}`,
+        `Telefono: ${form.phone.trim()}`,
+        `Data e ora: ${formatItalianDateTime(new Date(slot.startsAt))}`,
+        `Operatore: ${slot.staffName}`,
+      ];
+      if (form.message.trim()) lines.push(`Note: ${form.message.trim()}`);
+      let whatsappUrl = "";
+      try {
+        whatsappUrl = buildWhatsAppUrl(lines.join("\n"), business.whatsappNumber);
+      } catch {
+        whatsappUrl = "";
+      }
+      onSubmit({
+        result,
+        nome: `${form.firstName.trim()} ${form.lastName.trim()}`,
+        telefono: form.phone.trim(),
+        tipoLabel: treatment.name,
+        trattamento: treatment.name,
+        data: formatItalianDate(date),
+        ora: new Intl.DateTimeFormat("it-IT", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+          timeZone: "Europe/Rome",
+        }).format(new Date(slot.startsAt)),
+        whatsappUrl,
+      });
+    } catch (submitError) {
+      console.error("Invio prenotazione non riuscito.", submitError);
+      setSubmitError(errorMessage(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return <div className="prenota-form booking-form-shell">Caricamento disponibilità…</div>;
+
+  if (optionsError) {
+    return (
+      <div className="prenota-form booking-form-shell" role="alert">
+        <p>{optionsError}</p>
+        <button type="button" onClick={() => reloadOptions(true)} style={primaryButton}>Riprova</button>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="prenota-form booking-form-shell"
-      style={{
-        background: "#fffaf5",
-        padding: "48px",
-        borderRadius: "34px",
-        boxShadow: "0 20px 60px rgba(29,23,22,0.08)",
-        border: "1px solid rgba(0,0,0,0.04)",
-        textAlign: "left",
-      }}
-    >
-      {/* Step indicator */}
-      <div
-        className="step-indicator"
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          gap: "8px",
-          marginBottom: "32px",
-        }}
-      >
-        {[1, 2, 3, 4].map((s) => (
-          <div
-            key={s}
-            style={{
-              width: "40px",
-              height: "4px",
-              borderRadius: "999px",
-              background: s <= step ? "#736357" : "rgba(0,0,0,0.08)",
-              transition: "all 0.3s ease",
-            }}
-          />
+    <div className="prenota-form booking-form-shell" style={shellStyle}>
+      <div aria-label={`Passo ${step} di 4`} style={{ display: "flex", gap: 8, marginBottom: 28 }}>
+        {[1, 2, 3, 4].map((value) => (
+          <span key={value} style={{ flex: 1, height: 4, borderRadius: 4, background: value <= step ? "#736357" : "#e3d9d1" }} />
         ))}
       </div>
 
-      {/* STEP 1: Scegli tipo */}
       {step === 1 && (
-        <div>
-          <h3
-            style={{
-              fontFamily: "Georgia, serif",
-              fontSize: "28px",
-              color: "#1d1716",
-              marginBottom: "8px",
-              textAlign: "center",
-            }}
-          >
-            Cosa cerchi?
-          </h3>
-          <p
-            style={{
-              textAlign: "center",
-              color: "#6d5e57",
-              marginBottom: "32px",
-            }}
-          >
-            Scegli il tipo di appuntamento
-          </p>
-
-          <div
-            className="tipo-grid booking-type-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "20px",
-            }}
-          >
-            <button
-              className="tipo-card booking-choice-card"
-              onClick={() => handleTipoSelect("consulenza")}
-              style={{
-                padding: "32px 24px",
-                borderRadius: "24px",
-                border: tipo === "consulenza" ? "2px solid #736357" : "2px solid rgba(0,0,0,0.08)",
-                background: tipo === "consulenza" ? "rgba(115,99,87,0.1)" : "white",
-                cursor: "pointer",
-                transition: "all 0.3s ease",
-                textAlign: "center",
-              }}
-            >
-              <Sparkles size={32} color="#736357" style={{ marginBottom: "12px" }} />
-              <h4 style={{ fontSize: "20px", color: "#1d1716", marginBottom: "8px" }}>
-                Consulenza
-              </h4>
-              <p style={{ fontSize: "14px", color: "#6d5e57" }}>
-                Scopri il percorso beauty perfetto per te
-              </p>
-            </button>
-
-            <button
-              className="tipo-card booking-choice-card"
-              onClick={() => handleTipoSelect("trattamento")}
-              style={{
-                padding: "32px 24px",
-                borderRadius: "24px",
-                border: tipo === "trattamento" ? "2px solid #736357" : "2px solid rgba(0,0,0,0.08)",
-                background: tipo === "trattamento" ? "rgba(115,99,87,0.1)" : "white",
-                cursor: "pointer",
-                transition: "all 0.3s ease",
-                textAlign: "center",
-              }}
-            >
-              <Calendar size={32} color="#736357" style={{ marginBottom: "12px" }} />
-              <h4 style={{ fontSize: "20px", color: "#1d1716", marginBottom: "8px" }}>
-                Trattamento
-              </h4>
-              <p style={{ fontSize: "14px", color: "#6d5e57" }}>
-                Prenota il tuo trattamento specifico
-              </p>
-            </button>
-          </div>
-          {errors.tipo && (
-            <p style={{ color: "#e74c3c", fontSize: "14px", textAlign: "center", marginTop: "16px" }}>
-              {errors.tipo}
-            </p>
-          )}
-
-          <button
-            onClick={handleNext}
-            style={{
-              width: "100%",
-              marginTop: "32px",
-              padding: "18px 32px",
-              borderRadius: "999px",
-              border: "none",
-              background: "#736357",
-              color: "#ffffff",
-              fontWeight: "900",
-              fontSize: "16px",
-              cursor: "pointer",
-              transition: "all 0.3s ease",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "10px",
-            }}
-          >
-            Continua
-            <ArrowRight size={18} />
-          </button>
-        </div>
+        <section>
+          <Heading title="Scegli il trattamento" text="Seleziona il servizio e, se vuoi, l’operatore." />
+          <Field label="Trattamento *">
+            <select className="prenota-input" value={treatmentId} onChange={(event) => { setTreatmentId(event.target.value); setDate(""); setSlots([]); setSlot(null); setSlotsError(""); }}>
+              <option value="">Seleziona trattamento…</option>
+              {options?.treatments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Operatore (opzionale)">
+            <select className="prenota-input" value={staffId} onChange={(event) => { setStaffId(event.target.value); setDate(""); setSlots([]); setSlot(null); setSlotsError(""); }}>
+              <option value="">Qualsiasi operatore disponibile</option>
+              {options?.staff.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+        </section>
       )}
 
-      {/* STEP 2: Dati personali */}
       {step === 2 && (
-        <div>
-          <h3
-            style={{
-              fontFamily: "Georgia, serif",
-              fontSize: "28px",
-              color: "#1d1716",
-              marginBottom: "8px",
-            }}
-          >
-            I tuoi dati
-          </h3>
-          <p style={{ color: "#6d5e57", marginBottom: "32px" }}>
-            Inserisci i tuoi dati per la prenotazione
-          </p>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label className="prenota-label">
-              <User size={16} color="#736357" />
-              Nome e Cognome *
-            </label>
-            <input
-              type="text"
-              name="nome"
-              value={formData.nome}
-              onChange={handleChange}
-              placeholder="Maria Rossi"
-              className="prenota-input"
-              style={{ borderColor: errors.nome ? "#e74c3c" : undefined }}
-            />
-            {errors.nome && <p className="prenota-error">{errors.nome}</p>}
-          </div>
-
-          <div
-            className="prenota-grid booking-contact-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "20px",
-              marginBottom: "20px",
-            }}
-          >
-            <div>
-              <label className="prenota-label">
-                <Mail size={16} color="#736357" />
-                Email *
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                placeholder="maria@email.it"
-                className="prenota-input"
-                style={{ borderColor: errors.email ? "#e74c3c" : undefined }}
-              />
-              {errors.email && <p className="prenota-error">{errors.email}</p>}
-            </div>
-            <div>
-              <label className="prenota-label">
-                <Phone size={16} color="#736357" />
-                Telefono *
-              </label>
-              <input
-                type="tel"
-                name="telefono"
-                value={formData.telefono}
-                onChange={handleChange}
-                placeholder="+39 333 123 4567"
-                className="prenota-input"
-                style={{ borderColor: errors.telefono ? "#e74c3c" : undefined }}
-              />
-              {errors.telefono && <p className="prenota-error">{errors.telefono}</p>}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label className="prenota-label">
-              <MessageSquare size={16} color="#736357" />
-              Note (opzionale)
-            </label>
-            <textarea
-              name="messaggio"
-              value={formData.messaggio}
-              onChange={handleChange}
-              placeholder="Dicci cosa cerchi, eventuali allergie o preferenze..."
-              rows={3}
-              className="prenota-input"
-              style={{ resize: "vertical" }}
-            />
-          </div>
-
-          <div className="prenota-buttons booking-button-row" style={{ display: "flex", gap: "16px" }}>
-            <button
-              onClick={handleBack}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "2px solid #1d1716",
-                background: "transparent",
-                color: "#1d1716",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-              }}
-            >
-              Indietro
-            </button>
-            <button
-              onClick={handleNext}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "none",
-                background: "#736357",
-                color: "#ffffff",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-              }}
-            >
-              Continua
-              <ArrowRight size={18} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 3: Data e Ora */}
-      {step === 3 && (
-        <div>
-          <h3
-            style={{
-              fontFamily: "Georgia, serif",
-              fontSize: "28px",
-              color: "#1d1716",
-              marginBottom: "8px",
-            }}
-          >
-            Data e Ora
-          </h3>
-          <p style={{ color: "#6d5e57", marginBottom: "32px" }}>
-            Scegli la disponibilità per il tuo appuntamento
-          </p>
-
-          {/* Selezione trattamento (sempre richiesto, anche per consulenza) */}
-          <div style={{ marginBottom: "24px" }}>
-            <label className="prenota-label">
-              <Sparkles size={16} color="#736357" />
-              {tipo === "consulenza" ? "Trattamento di interesse *" : "Trattamento *"}
-            </label>
-            <div style={{ position: "relative" }}>
-              <select
-                name="trattamento"
-                value={formData.trattamento}
-                onChange={handleChange}
-                className="prenota-input"
-                style={{
-                  borderColor: errors.trattamento ? "#e74c3c" : undefined,
-                  appearance: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="" disabled>
-                  {tipo === "consulenza" ? "Seleziona il trattamento per la consulenza..." : "Seleziona trattamento..."}
-                </option>
-                {TRATTAMENTI.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-              <ChevronDown
-                size={18}
-                color="#736357"
-                style={{
-                  position: "absolute",
-                  right: "16px",
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  pointerEvents: "none",
-                }}
-              />
-            </div>
-            {errors.trattamento && <p className="prenota-error">{errors.trattamento}</p>}
-          </div>
-
-          {/* Selezione data */}
-          <div style={{ marginBottom: "24px" }}>
-            <label className="prenota-label">
-              <Calendar size={16} color="#736357" />
-              Data *
-            </label>
-            <div
-              className="date-grid booking-date-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))",
-                gap: "10px",
-              }}
-            >
-              {availableDates.map((date) => (
-                <button
-                  className="date-card booking-date-card"
-                  key={date.value}
-                  onClick={() => setFormData((prev) => ({ ...prev, data: date.value }))}
-                  style={{
-                    padding: "12px 8px",
-                    borderRadius: "16px",
-                    border: formData.data === date.value ? "2px solid #736357" : "2px solid rgba(0,0,0,0.08)",
-                    background: formData.data === date.value ? "rgba(115,99,87,0.1)" : "white",
-                    cursor: "pointer",
-                    transition: "all 0.3s ease",
-                    textAlign: "center",
-                  }}
-                >
-                  <p style={{ fontSize: "12px", color: "#6d5e57", textTransform: "uppercase" }}>
-                    {date.label.split(" ")[0]}
-                  </p>
-                  <p style={{ fontSize: "18px", fontWeight: "800", color: "#1d1716" }}>
-                    {date.label.split(" ")[1]}
-                  </p>
-                  <p style={{ fontSize: "12px", color: "#6d5e57" }}>
-                    {date.label.split(" ")[2]}
-                  </p>
+        <section>
+          <Heading title="Data e ora" text="Gli orari mostrati sono realmente disponibili." />
+          <Field label="Data *">
+            <select className="prenota-input" value={date} onChange={(event) => { setDate(event.target.value); setSlots([]); setSlot(null); setSlotsError(""); setSubmitError(""); }}>
+              <option value="">Seleziona una data…</option>
+              {dates.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </Field>
+          <div aria-live="polite">
+            {loadingSlots ? <p>Caricamento orari…</p> : null}
+            {slotsError ? (
+              <div role="alert">
+                <p>{slotsError}</p>
+                <button type="button" onClick={() => setSlotsReload((value) => value + 1)} style={secondaryButton}>Riprova</button>
+              </div>
+            ) : null}
+            {!loadingSlots && date && !slotsError && !slots.length ? <p>Nessuno slot disponibile per questa data.</p> : null}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+              {slots.map((item) => (
+                <button key={`${item.staffId}-${item.startsAt}`} type="button" onClick={() => setSlot(item)} style={choiceStyle(slot?.startsAt === item.startsAt)}>
+                  <Clock size={16} /> {new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/Rome" }).format(new Date(item.startsAt))}
                 </button>
               ))}
             </div>
-            {errors.data && <p className="prenota-error">{errors.data}</p>}
           </div>
-
-          {/* Selezione orario */}
-          <div style={{ marginBottom: "24px" }}>
-            <label className="prenota-label">
-              <Clock size={16} color="#736357" />
-              {tipo === "trattamento" ? "Orario preferibile *" : "Orario *"}
-            </label>
-
-            {tipo === "trattamento" ? (
-              <>
-                <input
-                  type="time"
-                  name="ora"
-                  value={formData.ora}
-                  onChange={handleChange}
-                  min="08:30"
-                  max="17:00"
-                  className="prenota-input booking-time-input"
-                  style={{
-                    borderColor: errors.ora ? "#e74c3c" : undefined,
-                  }}
-                />
-
-                <p
-                  style={{
-                    fontSize: "16px",
-                    color: "#6d5e57",
-                    marginTop: "8px",
-                    lineHeight: "1.5",
-                  }}
-                >
-                  Inserisci l'orario che preferisci tra le 08:30 e le 17:00 e Medea ti confermerà la disponibilità
-                </p>
-              </>
-            ) : (
-              <div
-                className="time-grid booking-time-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, 1fr)",
-                  gap: "10px",
-                }}
-              >
-                {ORARI.map((ora) => (
-                  <button
-                    className="time-card booking-time-card"
-                    key={ora}
-                    onClick={() => setFormData((prev) => ({ ...prev, ora }))}
-                    style={{
-                      padding: "14px",
-                      borderRadius: "14px",
-                      border: formData.ora === ora ? "2px solid #736357" : "2px solid rgba(0,0,0,0.08)",
-                      background: formData.ora === ora ? "rgba(115,99,87,0.1)" : "white",
-                      cursor: "pointer",
-                      transition: "all 0.3s ease",
-                      fontWeight: "800",
-                      fontSize: "14px",
-                      color: formData.ora === ora ? "#1d1716" : "#6d5e57",
-                    }}
-                  >
-                    {ora}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {errors.ora && <p className="prenota-error">{errors.ora}</p>}
-          </div>
-
-          <div className="prenota-buttons booking-button-row" style={{ display: "flex", gap: "16px" }}>
-            <button
-              onClick={handleBack}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "2px solid #1d1716",
-                background: "transparent",
-                color: "#1d1716",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-              }}
-            >
-              Indietro
-            </button>
-            <button
-              onClick={handleNext}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "none",
-                background: "#736357",
-                color: "#ffffff",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-              }}
-            >
-              Riepilogo
-              <ArrowRight size={18} />
-            </button>
-          </div>
-        </div>
+        </section>
       )}
 
-      {/* STEP 4: Riepilogo */}
+      {step === 3 && (
+        <section>
+          <Heading title="I tuoi dati" text="Inserisci i contatti per ricevere la conferma." />
+          <div className="prenota-grid booking-contact-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <Field label={<><User size={16} /> Nome *</>}><input className="prenota-input" maxLength={BOOKING_LIMITS.firstName} value={form.firstName} onChange={(event) => setField("firstName", event.target.value)} autoComplete="given-name" /></Field>
+            <Field label="Cognome *"><input className="prenota-input" maxLength={BOOKING_LIMITS.lastName} value={form.lastName} onChange={(event) => setField("lastName", event.target.value)} autoComplete="family-name" /></Field>
+            <Field label={<><Mail size={16} /> Email *</>}><input className="prenota-input" type="email" maxLength={BOOKING_LIMITS.email} value={form.email} onChange={(event) => setField("email", event.target.value)} autoComplete="email" /></Field>
+            <Field label={<><Phone size={16} /> Telefono *</>}><input className="prenota-input" type="tel" maxLength={BOOKING_LIMITS.phone} value={form.phone} onChange={(event) => setField("phone", event.target.value)} autoComplete="tel" /></Field>
+          </div>
+          <Field label={<><MessageSquare size={16} /> Messaggio (opzionale)</>}>
+            <textarea className="prenota-input" rows={3} maxLength={BOOKING_LIMITS.message} value={form.message} onChange={(event) => setField("message", event.target.value)} />
+          </Field>
+          <input aria-hidden="true" tabIndex={-1} autoComplete="off" value={form.honeypot} onChange={(event) => setField("honeypot", event.target.value)} style={{ position: "absolute", left: "-10000px" }} />
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, lineHeight: 1.5 }}>
+            <input type="checkbox" checked={form.privacyAccepted} onChange={(event) => setField("privacyAccepted", event.target.checked)} />
+            <span>Ho letto la <a href="/privacy-policy">Privacy Policy</a> ({legalConfiguration.privacyVersion}) per inviare la richiesta.</span>
+          </label>
+        </section>
+      )}
+
       {step === 4 && (
-        <div>
-          <h3
-            style={{
-              fontFamily: "Georgia, serif",
-              fontSize: "28px",
-              color: "#1d1716",
-              marginBottom: "8px",
-            }}
-          >
-            Conferma prenotazione
-          </h3>
-          <p style={{ color: "#6d5e57", marginBottom: "32px" }}>
-            Controlla i dati e conferma
-          </p>
-
-          <div
-            className="riepilogo-box booking-summary-box"
-            style={{
-              background: "white",
-              borderRadius: "24px",
-              padding: "28px",
-              marginBottom: "32px",
-              border: "1px solid rgba(0,0,0,0.06)",
-            }}
-          >
-            <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-              <p style={{ fontSize: "12px", color: "#6d5e57", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "800" }}>
-                Tipo appuntamento
-              </p>
-              <p style={{ fontSize: "18px", color: "#1d1716", fontWeight: "800" }}>
-                {tipo === "consulenza" ? `Consulenza Beauty - ${formData.trattamento}` : `Trattamento: ${formData.trattamento}`}
-              </p>
-            </div>
-            <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-              <p style={{ fontSize: "12px", color: "#6d5e57", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "800" }}>
-                Data e Ora
-              </p>
-              <p style={{ fontSize: "18px", color: "#1d1716", fontWeight: "800" }}>
-                {formData.data} alle {formData.ora}
-              </p>
-            </div>
-            <div style={{ marginBottom: "16px", paddingBottom: "16px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-              <p style={{ fontSize: "12px", color: "#6d5e57", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "800" }}>
-                Dati cliente
-              </p>
-              <p style={{ fontSize: "16px", color: "#1d1716" }}>{formData.nome}</p>
-              <p style={{ fontSize: "14px", color: "#6d5e57" }}>{formData.email}</p>
-              <p style={{ fontSize: "14px", color: "#6d5e57" }}>{formData.telefono}</p>
-            </div>
-            {formData.messaggio && (
-              <div>
-                <p style={{ fontSize: "12px", color: "#6d5e57", textTransform: "uppercase", letterSpacing: "1px", fontWeight: "800" }}>
-                  Note
-                </p>
-                <p style={{ fontSize: "14px", color: "#1d1716" }}>{formData.messaggio}</p>
-              </div>
-            )}
-          </div>
-
-          <div className="prenota-buttons booking-button-row" style={{ display: "flex", gap: "16px" }}>
-            <button
-              onClick={handleBack}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "2px solid #1d1716",
-                background: "transparent",
-                color: "#1d1716",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-              }}
-            >
-              Modifica
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              style={{
-                flex: 1,
-                padding: "18px 32px",
-                borderRadius: "999px",
-                border: "none",
-                background: "#736357",
-                color: "#ffffff",
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "10px",
-              }}
-            >
-              {isSubmitting ? "Conferma..." : "Conferma Prenotazione"}
-              <ArrowRight size={18} />
-            </button>
-          </div>
-        </div>
+        <section>
+          <Heading title="Riepilogo" text="Controlla i dati prima di inviare la richiesta." />
+          <p><strong>Trattamento:</strong> {treatment?.name}</p>
+          <p><strong>Data e ora:</strong> {slot ? formatItalianDateTime(new Date(slot.startsAt)) : ""}</p>
+          <p><strong>Operatore:</strong> {selectedStaff?.name ?? slot?.staffName}</p>
+          <p><strong>Nome:</strong> {form.firstName.trim()} {form.lastName.trim()}</p>
+        </section>
       )}
+
+      {submitError ? <p role="alert" className="prenota-error" style={{ marginTop: 18 }}>{submitError}</p> : null}
+      <div className="prenota-buttons booking-button-row" style={{ display: "flex", gap: 12, marginTop: 28 }}>
+        {step > 1 ? <button type="button" onClick={() => setStep((value) => value - 1)} style={secondaryButton}><ArrowLeft size={18} /> Indietro</button> : null}
+        {step < 4
+          ? <button type="button" onClick={next} style={primaryButton}>Continua <ArrowRight size={18} /></button>
+          : <button type="button" disabled={submitting} onClick={submit} style={{ ...primaryButton, opacity: submitting ? 0.6 : 1 }}>{submitting ? "Invio…" : "Invia richiesta"}</button>}
+      </div>
     </div>
   );
 }
+
+function Heading({ title, text }) {
+  return <><h3 style={{ fontFamily: "Georgia, serif", fontSize: 28, marginBottom: 8 }}>{title}</h3><p style={{ color: "#6d5e57", marginBottom: 28 }}>{text}</p></>;
+}
+
+function Field({ label, children }) {
+  return <div style={{ marginBottom: 20 }}><label className="prenota-label">{label}{children}</label></div>;
+}
+
+const shellStyle = { background: "#fffaf5", padding: "clamp(24px, 6vw, 48px)", borderRadius: 34, boxShadow: "0 20px 60px rgba(29,23,22,0.08)", border: "1px solid rgba(0,0,0,0.04)", textAlign: "left" };
+const primaryButton = { flex: 1, minHeight: 52, borderRadius: 999, border: 0, background: "#736357", color: "#fff", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" };
+const secondaryButton = { ...primaryButton, border: "2px solid #1d1716", background: "transparent", color: "#1d1716" };
+const choiceStyle = (selected) => ({ minHeight: 48, borderRadius: 16, border: selected ? "2px solid #736357" : "2px solid rgba(0,0,0,0.08)", background: selected ? "rgba(115,99,87,0.1)" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer" });
 
 export default BookingForm;
