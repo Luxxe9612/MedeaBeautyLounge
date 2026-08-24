@@ -27,6 +27,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route path="/addome-sculpt" element={<AddomeSculpt />} />
         <Route path="/skin-lab-360" element={<SkinLab />} />
         <Route path="/gallery" element={<GalleryPage />} />
+        <Route path="/privacy-policy" element={<App />} />
+        <Route path="/cookie-policy" element={<App />} />
         <Route
           path="/admin"
           element={
