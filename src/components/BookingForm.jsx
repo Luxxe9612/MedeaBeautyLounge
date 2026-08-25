@@ -75,6 +75,11 @@ function BookingForm({ onSubmit }) {
     email: "",
     phone: "",
     message: "",
+    needsPhoneCharging: false,
+    hasCosmeticAllergies: false,
+    allergyDetails: "",
+    beveragePreferences: ["none"],
+    needsTaxi: false,
     privacyAccepted: false,
     honeypot: "",
   });
@@ -160,6 +165,18 @@ function BookingForm({ onSubmit }) {
     setSubmitError("");
   };
 
+  const toggleBeverage = (value) => {
+    setForm((current) => {
+      if (value === "none") return { ...current, beveragePreferences: ["none"] };
+      const selected = current.beveragePreferences.filter((item) => item !== "none");
+      const next = selected.includes(value)
+        ? selected.filter((item) => item !== value)
+        : [...selected, value];
+      return { ...current, beveragePreferences: next.length ? next : ["none"] };
+    });
+    setSubmitError("");
+  };
+
   const next = () => {
     setSubmitError("");
     if (step === 1 && !treatmentId) return setSubmitError("Seleziona un trattamento.");
@@ -173,7 +190,10 @@ function BookingForm({ onSubmit }) {
       }
       if (invalid.length) return setSubmitError("Controlla i dati inseriti prima di continuare.");
     }
-    setStep((current) => Math.min(4, current + 1));
+    if (step === 4 && form.hasCosmeticAllergies && !form.allergyDetails.trim()) {
+      return setSubmitError("Specifica le allergie o intolleranze cosmetiche.");
+    }
+    setStep((current) => Math.min(5, current + 1));
     return undefined;
   };
 
@@ -192,6 +212,13 @@ function BookingForm({ onSubmit }) {
         treatmentId,
         staffId: slot.staffId,
         startsAt: slot.startsAt,
+        experiencePreferences: {
+          needsPhoneCharging: form.needsPhoneCharging,
+          hasCosmeticAllergies: form.hasCosmeticAllergies,
+          ...(form.hasCosmeticAllergies ? { allergyDetails: form.allergyDetails.trim() } : {}),
+          beveragePreferences: form.beveragePreferences,
+          needsTaxi: form.needsTaxi,
+        },
         privacyAccepted: true,
         source: "website",
         honeypot: form.honeypot,
@@ -247,8 +274,8 @@ function BookingForm({ onSubmit }) {
 
   return (
     <div className="prenota-form booking-form-shell" style={shellStyle}>
-      <div aria-label={`Passo ${step} di 4`} style={{ display: "flex", gap: 8, marginBottom: 28 }}>
-        {[1, 2, 3, 4].map((value) => (
+      <div aria-label={`Passo ${step} di 5`} style={{ display: "flex", gap: 8, marginBottom: 28 }}>
+        {[1, 2, 3, 4, 5].map((value) => (
           <span key={value} style={{ flex: 1, height: 4, borderRadius: 4, background: value <= step ? "#736357" : "#e3d9d1" }} />
         ))}
       </div>
@@ -322,6 +349,18 @@ function BookingForm({ onSubmit }) {
 
       {step === 4 && (
         <section>
+          <Heading title="Un ultimo passo" text="Queste informazioni servono solo a preparare questo appuntamento e saranno visibili esclusivamente al personale coinvolto." />
+          <ChoiceQuestion label="Hai bisogno di ricaricare il cellulare?" value={form.needsPhoneCharging} onChange={(value) => setField("needsPhoneCharging", value)} />
+          <ChoiceQuestion label="Hai allergie o intolleranze a ingredienti cosmetici?" value={form.hasCosmeticAllergies} onChange={(value) => { setField("hasCosmeticAllergies", value); if (!value) setField("allergyDetails", ""); }} />
+          {form.hasCosmeticAllergies ? <Field label="Specifica quali *"><textarea className="prenota-input" rows={2} maxLength={BOOKING_LIMITS.allergyDetails} value={form.allergyDetails} onChange={(event) => setField("allergyDetails", event.target.value)} /></Field> : null}
+          <Field label="Preferenze bevande"><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{[["hot", "Calde"], ["cold", "Fredde"], ["classic", "Classiche"], ["light", "Light"], ["alcoholic", "Alcoliche"], ["none", "Nessuna preferenza"]].map(([value, label]) => <button key={value} type="button" style={choiceStyle(form.beveragePreferences.includes(value))} onClick={() => toggleBeverage(value)}>{label}</button>)}</div></Field>
+          <ChoiceQuestion label="Hai bisogno del servizio Taxi?" value={form.needsTaxi} onChange={(value) => setField("needsTaxi", value)} />
+          <p style={{ color: "#6d5e57" }}>Servizio esterno convenzionato · 10 € a tratta. Medea non invierà automaticamente i tuoi dati al fornitore.</p>
+        </section>
+      )}
+
+      {step === 5 && (
+        <section>
           <Heading title="Riepilogo" text="Controlla i dati prima di inviare la richiesta." />
           <p><strong>Trattamento:</strong> {treatment?.name}</p>
           <p><strong>Data e ora:</strong> {slot ? formatItalianDateTime(new Date(slot.startsAt)) : ""}</p>
@@ -333,7 +372,7 @@ function BookingForm({ onSubmit }) {
       {submitError ? <p role="alert" className="prenota-error" style={{ marginTop: 18 }}>{submitError}</p> : null}
       <div className="prenota-buttons booking-button-row" style={{ display: "flex", gap: 12, marginTop: 28 }}>
         {step > 1 ? <button type="button" onClick={() => setStep((value) => value - 1)} style={secondaryButton}><ArrowLeft size={18} /> Indietro</button> : null}
-        {step < 4
+        {step < 5
           ? <button type="button" onClick={next} style={primaryButton}>Continua <ArrowRight size={18} /></button>
           : <button type="button" disabled={submitting} onClick={submit} style={{ ...primaryButton, opacity: submitting ? 0.6 : 1 }}>{submitting ? "Invio…" : "Invia richiesta"}</button>}
       </div>
@@ -347,6 +386,10 @@ function Heading({ title, text }) {
 
 function Field({ label, children }) {
   return <div style={{ marginBottom: 20 }}><label className="prenota-label">{label}{children}</label></div>;
+}
+
+function ChoiceQuestion({ label, value, onChange }) {
+  return <Field label={label}><div style={{ display: "flex", gap: 8 }}><button type="button" style={choiceStyle(value)} onClick={() => onChange(true)}>Sì</button><button type="button" style={choiceStyle(!value)} onClick={() => onChange(false)}>No</button></div></Field>;
 }
 
 const shellStyle = { background: "#fffaf5", padding: "clamp(24px, 6vw, 48px)", borderRadius: 34, boxShadow: "0 20px 60px rgba(29,23,22,0.08)", border: "1px solid rgba(0,0,0,0.04)", textAlign: "left" };

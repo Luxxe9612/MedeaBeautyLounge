@@ -4,6 +4,7 @@ export const BOOKING_LIMITS = Object.freeze({
   email: 254,
   phone: 30,
   message: 1000,
+  allergyDetails: 500,
 });
 
 export const BOOKING_ERROR_MESSAGES = Object.freeze({
@@ -49,6 +50,7 @@ export function validateBookingContact(form) {
   }
   if (phone.length < 7 || phone.length > BOOKING_LIMITS.phone) invalid.push("phone");
   if (form.message.trim().length > BOOKING_LIMITS.message) invalid.push("message");
+  if (form.hasCosmeticAllergies && (!form.allergyDetails.trim() || form.allergyDetails.trim().length > BOOKING_LIMITS.allergyDetails)) invalid.push("allergyDetails");
   if (!form.privacyAccepted) invalid.push("privacyAccepted");
   if (form.honeypot !== "") invalid.push("honeypot");
   return invalid;

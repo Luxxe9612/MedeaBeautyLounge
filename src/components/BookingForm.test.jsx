@@ -67,6 +67,8 @@ async function reachConfirmationStep(onSubmit = vi.fn()) {
   fireEvent.change(screen.getByLabelText(/telefono/i), { target: { value: "+39 333 1234567" } });
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: /continua/i }));
+  await screen.findByText("Un ultimo passo");
+  fireEvent.click(screen.getByRole("button", { name: /continua/i }));
   await screen.findByText("Riepilogo");
   return onSubmit;
 }
@@ -96,6 +98,12 @@ describe("BookingForm guest", () => {
       email: "maria@example.com",
       phone: "+393331234567",
       source: "website",
+      experiencePreferences: {
+        needsPhoneCharging: false,
+        hasCosmeticAllergies: false,
+        beveragePreferences: ["none"],
+        needsTaxi: false,
+      },
     }));
   });
 
@@ -142,6 +150,7 @@ describe("BookingForm guest", () => {
       email: 254,
       phone: 30,
       message: 1000,
+      allergyDetails: 500,
     });
     expect(normalizeBookingEmail(" Maria@Example.COM ")).toBe("maria@example.com");
     expect(normalizeBookingPhone("+39 333-123 4567")).toBe("+393331234567");
@@ -151,9 +160,12 @@ describe("BookingForm guest", () => {
       email: "invalid",
       phone: "123",
       message: "",
+      hasCosmeticAllergies: false,
+      allergyDetails: "",
       privacyAccepted: false,
       honeypot: "",
     })).toEqual(expect.arrayContaining(["firstName", "email", "phone", "privacyAccepted"]));
+    expect(validateBookingContact({ firstName: "Maria", lastName: "Rossi", email: "maria@example.com", phone: "+393331234567", message: "", hasCosmeticAllergies: true, allergyDetails: "", privacyAccepted: true, honeypot: "" })).toContain("allergyDetails");
   });
 
   it("formats dates and times in Italian without persisting formatted strings", () => {

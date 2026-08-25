@@ -93,7 +93,7 @@ function Prenota() {
             margin: "0 auto 50px",
           }}
         >
-          Compila il form per richiedere un appuntamento. Ti risponderemo entro 24 ore su WhatsApp.
+          Compila il form per richiedere un appuntamento. Riceverai la conferma dopo la verifica di Medea; WhatsApp resta facoltativo.
         </p>
 
         <BookingForm onSubmit={handleBookingSubmit} />
